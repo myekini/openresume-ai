@@ -45,8 +45,8 @@ The frontend points to whichever backend is running via a single env var:
 
 ```bash
 # frontend/.env.local
-NEXT_PUBLIC_API_URL=http://localhost:3000   # main  (Node.js)
-NEXT_PUBLIC_API_URL=http://localhost:8000   # dev/muhammad (Python)
+NEXT_PUBLIC_API_URL=http://localhost:3001   # main  (Node.js on 3001)
+NEXT_PUBLIC_API_URL=http://localhost:8000   # dev/muhammad (Python on 8000)
 ```
 
 ---
@@ -117,16 +117,17 @@ openresume-ai/
 │
 ├── backend/                          # main branch — Node.js + LangGraph.js
 │   ├── src/
-│   │   ├── index.ts                  # Express entry point
+│   │   ├── index.ts                  # Express entry point (port 3001)
 │   │   ├── agent/
-│   │   │   ├── state.ts              # AgentState, EditPatch types
-│   │   │   ├── nodes.ts              # parse_jd, analyze_gaps, generate_edits
-│   │   │   └── graph.ts              # LangGraph StateGraph + checkpointer
+│   │   │   ├── state.ts              # AgentState, EditPatch types (Zod)
+│   │   │   ├── nodes.ts              # parseJd, analyzeGaps, generateEdits
+│   │   │   └── graph.ts              # LangGraph StateGraph + MemorySaver
 │   │   └── routes/
 │   │       ├── parse.ts              # POST /parse
 │   │       ├── agent.ts              # POST /agent, POST /agent/resume
 │   │       ├── export.ts             # POST /export
 │   │       └── versions.ts           # GET|POST /versions
+│   ├── .env.example
 │   └── package.json
 │
 └── backend-py/                       # dev/muhammad branch — FastAPI + Python
@@ -311,12 +312,25 @@ interface EditPatch {
 ### `frontend/.env.local`
 
 ```bash
-NEXT_PUBLIC_API_URL=http://localhost:8000    # point to whichever backend is running
+NEXT_PUBLIC_API_URL=http://localhost:3001    # main: Node.js backend
+# NEXT_PUBLIC_API_URL=http://localhost:8000  # dev/muhammad: Python backend
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_...
 CLERK_SECRET_KEY=sk_...
 ```
 
-### `backend-py/.env`
+### `backend/.env` *(main branch)*
+
+```bash
+PORT=3001
+FRONTEND_URL=http://localhost:3000
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...                        # optional
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_KEY=eyJ...
+REDIS_URL=redis://...
+```
+
+### `backend-py/.env` *(dev/muhammad branch)*
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...

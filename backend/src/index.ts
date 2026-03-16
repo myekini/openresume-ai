@@ -9,9 +9,9 @@ import versionsRouter from './routes/versions';
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 3001;
 
-app.use(cors());
+app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000' }));
 app.use(express.json());
 
 app.use('/parse', parseRouter);
@@ -19,10 +19,10 @@ app.use('/agent', agentRouter);
 app.use('/export', exportRouter);
 app.use('/versions', versionsRouter);
 
-app.get('/health', (req, res) => {
+app.get('/health', (_req, res) => {
   res.json({ status: 'ok', backend: 'node' });
 });
 
 app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+  console.log(`Backend running on http://localhost:${port}`);
 });
