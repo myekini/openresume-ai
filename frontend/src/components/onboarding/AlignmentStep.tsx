@@ -12,7 +12,50 @@ const MODELS = [
 ];
 
 export function AlignmentStep() {
-  const { setOnboardingStep } = useResumeStore();
+  const {
+    setOnboardingStep,
+    jdText,
+    setJdText,
+    jobTitle,
+    setJobTitle,
+    company,
+    setCompany,
+    selectedModel,
+    setSelectedModel,
+    setResumeName,
+    clearMessages,
+    addMessage,
+  } = useResumeStore();
+
+  // Build a display name from jobTitle + company and store it
+  const handleJobTitleChange = (val: string) => {
+    setJobTitle(val);
+    const co = useResumeStore.getState().company;
+    if (val || co) setResumeName([val, co].filter(Boolean).join(' @ '));
+  };
+
+  const handleCompanyChange = (val: string) => {
+    setCompany(val);
+    const jt = useResumeStore.getState().jobTitle;
+    if (jt || val) setResumeName([jt, val].filter(Boolean).join(' @ '));
+  };
+
+  // When "Open Canvas" is clicked, seed the chat with the JD context message
+  const handleOpenCanvas = () => {
+    if (jdText.trim()) {
+      clearMessages();
+      const preview = jdText.length > 200 ? jdText.slice(0, 200) + '…' : jdText;
+      addMessage({
+        role: 'ai',
+        content: `Got it — I've loaded your job description${
+          jobTitle ? ` for the ${jobTitle}` : ''
+        }${company ? ` role at ${company}` : ''
+        }. I'll analyze gaps and suggest targeted edits across your resume. Ready when you are.`,
+      });
+      // Keep the preview accessible
+      void preview;
+    }
+  };
 
   return (
     <div className="w-full max-w-[480px] space-y-6">
@@ -26,9 +69,16 @@ export function AlignmentStep() {
         </label>
         <textarea
           id="jd-input"
+          value={jdText}
+          onChange={(e) => setJdText(e.target.value)}
           className="w-full h-40 bg-[#111111] border border-[#1e1e1e] hover:border-[#2a2a2a] focus:border-[#00e5a0] outline-none text-sm text-[#f5f5f5] p-4 leading-relaxed placeholder:text-[#444444] resize-none rounded-sm transition-colors custom-scrollbar"
           placeholder="Paste the full job description here..."
         />
+        {jdText.trim() && (
+          <span className="absolute bottom-3 right-3 font-mono text-[9px] text-[#00e5a0]">
+            {jdText.trim().split(/\s+/).length} words
+          </span>
+        )}
       </div>
 
       {/* Job title + company */}
@@ -43,6 +93,8 @@ export function AlignmentStep() {
           <input
             id="job-title"
             type="text"
+            value={jobTitle}
+            onChange={(e) => handleJobTitleChange(e.target.value)}
             placeholder="e.g. Senior PM"
             className="w-full bg-[#111111] border border-[#1e1e1e] hover:border-[#2a2a2a] focus:border-[#00e5a0] outline-none text-sm text-[#f5f5f5] px-3 py-2.5 rounded-sm placeholder:text-[#444444] transition-colors"
           />
@@ -57,6 +109,8 @@ export function AlignmentStep() {
           <input
             id="company"
             type="text"
+            value={company}
+            onChange={(e) => handleCompanyChange(e.target.value)}
             placeholder="e.g. Stripe"
             className="w-full bg-[#111111] border border-[#1e1e1e] hover:border-[#2a2a2a] focus:border-[#00e5a0] outline-none text-sm text-[#f5f5f5] px-3 py-2.5 rounded-sm placeholder:text-[#444444] transition-colors"
           />
@@ -74,6 +128,8 @@ export function AlignmentStep() {
         <div className="relative">
           <select
             id="model-selector"
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
             className="w-full bg-[#111111] border border-[#1e1e1e] hover:border-[#2a2a2a] focus:border-[#00e5a0] outline-none text-sm text-[#f5f5f5] px-3 py-2.5 rounded-sm appearance-none cursor-pointer transition-colors"
           >
             {MODELS.map((m) => (
@@ -98,6 +154,7 @@ export function AlignmentStep() {
         <Link
           href="/canvas"
           id="alignment-open-canvas-btn"
+          onClick={handleOpenCanvas}
           className="flex items-center gap-2.5 bg-[#00e5a0] hover:bg-[#00c98e] text-black px-6 py-3 rounded-sm font-bold text-sm transition-all hover:scale-[1.02] shadow-[0_0_20px_rgba(0,229,160,0.2)] group"
         >
           Open Canvas

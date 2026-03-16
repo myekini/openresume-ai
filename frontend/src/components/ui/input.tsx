@@ -92,11 +92,10 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
 Textarea.displayName = "Textarea";
 
 /** Compact chat-style textarea with a send button slot */
-export function ChatInput({
-  children,
-  className,
-  ...props
-}: TextareaHTMLAttributes<HTMLTextAreaElement> & { children?: React.ReactNode }) {
+export const ChatInput = forwardRef<
+  HTMLTextAreaElement,
+  TextareaHTMLAttributes<HTMLTextAreaElement> & { children?: React.ReactNode }
+>(({ children, className, ...props }, ref) => {
   return (
     <div
       className={cn(
@@ -108,6 +107,7 @@ export function ChatInput({
       )}
     >
       <textarea
+        ref={ref}
         className="flex-1 bg-transparent border-none outline-none text-[13px] resize-none min-h-[36px] max-h-[120px] text-[#e8e8e8] placeholder:text-[#2a2a2a] custom-scrollbar"
         rows={2}
         {...props}
@@ -115,4 +115,6 @@ export function ChatInput({
       {children}
     </div>
   );
-}
+});
+
+ChatInput.displayName = "ChatInput";
