@@ -1238,6 +1238,56 @@ interface AgentRequest {
 }
 ```
 
+### POST /models/test — validate key + fetch model list
+
+The settings page calls this before saving credentials. Returns `{ ok, model_list? }`.
+
+```typescript
+// backend/src/routes/models.ts  (already scaffolded — mounted at /models)
+// POST /models/test
+// Body: { provider, api_key?, base_url? }
+// Response: { ok: boolean, model_list?: string[], error?: string }
+```
+
+```typescript
+// Anthropic — uses client.models.list()
+const client = new Anthropic({ apiKey: api_key ?? process.env.ANTHROPIC_API_KEY });
+const response = await client.models.list({ limit: 20 });
+return { ok: true, model_list: response.data.map(m => m.id) };
+
+// OpenAI — filter to GPT models only
+const client = new OpenAI({ apiKey: api_key ?? process.env.OPENAI_API_KEY });
+const response = await client.models.list();
+return { ok: true, model_list: response.data.map(m => m.id).filter(id => id.startsWith('gpt')) };
+
+// Ollama — hit local /api/tags
+const response = await fetch(`${base_url ?? 'http://localhost:11434'}/api/tags`);
+const data = await response.json();
+return { ok: true, model_list: data.models.map(m => m.name) };
+```
+
+### Verify
+
+```bash
+# Test Anthropic key
+curl -X POST http://localhost:3001/models/test \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"anthropic","api_key":"sk-ant-..."}'
+# {"ok":true,"model_list":["claude-3-5-sonnet-20241022","claude-3-opus-20240229",...]}
+
+# Test with invalid key
+curl -X POST http://localhost:3001/models/test \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"openai","api_key":"invalid"}'
+# {"ok":false,"error":"401 Incorrect API key"}
+
+# Test Ollama (requires local Ollama running)
+curl -X POST http://localhost:3001/models/test \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"ollama"}'
+# {"ok":true,"model_list":["llama3:8b","mistral:7b",...]}
+```
+
 ---
 
 ## Block 12 — Deploy: Vercel (API Routes) or Railway
@@ -1328,7 +1378,7 @@ NEXT_PUBLIC_API_URL=https://openresume-api.up.railway.app
 | 8 | Frontend wired | Full browser flow works end-to-end |
 | 9 | `GET /versions/:id` | Versions survive server restart |
 | 10 | Auth header | 401 without Clerk token, 200 with it |
-| 11 | `?provider=openai` | Works with OpenAI key |
+| 11 | `POST /models/test` | `{"ok":true,"model_list":[...]}` |
 | 12 | Deployed URL | Production health check passes |
 
 ---

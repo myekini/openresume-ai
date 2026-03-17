@@ -5,6 +5,7 @@ import parseRouter from './routes/parse';
 import agentRouter from './routes/agent';
 import exportRouter from './routes/export';
 import versionsRouter from './routes/versions';
+import modelsRouter from './routes/models';
 
 dotenv.config();
 
@@ -18,6 +19,7 @@ app.use('/parse', parseRouter);
 app.use('/agent', agentRouter);
 app.use('/export', exportRouter);
 app.use('/versions', versionsRouter);
+app.use('/models', modelsRouter);
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', backend: 'node' });
