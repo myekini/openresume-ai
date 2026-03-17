@@ -911,6 +911,57 @@ class AgentRequest(BaseModel):
 - No streaming for some Ollama models — fallback to non-streaming
 - Cold start is slow (~3–5s) — show a loading state
 
+### POST /models/test — validate key + fetch model list
+
+The settings page calls this before saving credentials. Already scaffolded at `backend-py/routes/models.py` and mounted at `/models`.
+
+```python
+# backend-py/routes/models.py  (already scaffolded)
+# POST /models/test
+# Body: { provider, api_key?, base_url? }
+# Response: { ok: bool, model_list?: list[str], error?: str }
+```
+
+```python
+# Anthropic — uses client.models.list()
+client = anthropic.Anthropic(api_key=body.api_key or os.environ["ANTHROPIC_API_KEY"])
+response = client.models.list(limit=20)
+return {"ok": True, "model_list": [m.id for m in response.data]}
+
+# OpenAI — filter to GPT models
+client = OpenAI(api_key=body.api_key or os.environ.get("OPENAI_API_KEY"))
+response = client.models.list()
+return {"ok": True, "model_list": sorted([m.id for m in response.data if m.id.startswith("gpt")])}
+
+# Ollama — hit local /api/tags
+async with httpx.AsyncClient() as client:
+    r = await client.get(f"{base_url}/api/tags", timeout=5)
+    data = r.json()
+return {"ok": True, "model_list": [m["name"] for m in data.get("models", [])]}
+```
+
+### Verify
+
+```bash
+# Test Anthropic key
+curl -X POST http://localhost:8000/models/test \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"anthropic","api_key":"sk-ant-..."}'
+# {"ok":true,"model_list":["claude-3-5-sonnet-20241022",...]}
+
+# Test with invalid key
+curl -X POST http://localhost:8000/models/test \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"openai","api_key":"invalid"}'
+# {"ok":false,"error":"401 Incorrect API key"}
+
+# Test Ollama
+curl -X POST http://localhost:8000/models/test \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"ollama"}'
+# {"ok":true,"model_list":["llama3:8b","mistral:7b",...]}
+```
+
 ---
 
 ## Block 12 — Docker + Railway Deployment
@@ -1010,7 +1061,7 @@ app.add_middleware(
 | 8 | Frontend wired | Full browser flow works end-to-end |
 | 9 | `GET /versions/:id` | Versions persist across server restarts |
 | 10 | Auth header | 401 without token, 200 with valid Clerk JWT |
-| 11 | `?provider=ollama` | Works with no API key, Ollama running |
+| 11 | `POST /models/test` | `{"ok":true,"model_list":[...]}` for all 3 providers |
 | 12 | Railway URL | Production health check passes |
 
 ---
