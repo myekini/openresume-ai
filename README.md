@@ -2,15 +2,16 @@
 
 # OpenResume AI
 
-**AI-powered resume editor that makes surgical, explainable edits — never rewrites your story.**
+**AI-powered resume editor — surgical, explainable edits, human always in control.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-00e5a0.svg)](LICENSE)
 [![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)](https://nextjs.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-Python_3.12-009688?logo=fastapi)](https://fastapi.tiangolo.com)
-[![LangGraph](https://img.shields.io/badge/LangGraph-Python_%26_JS-blueviolet)](https://langchain-ai.github.io/langgraph)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Python](https://img.shields.io/badge/Python-3.12-3776ab?logo=python&logoColor=white)](https://python.org)
+[![LangGraph](https://img.shields.io/badge/LangGraph-JS_%26_Python-blueviolet)](https://langchain-ai.github.io/langgraph)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
-[Live Demo](#) · [Report Bug](https://github.com/myekini/openresume-ai/issues) · [Request Feature](https://github.com/myekini/openresume-ai/issues)
+[Report Bug](https://github.com/myekini/openresume-ai/issues) · [Request Feature](https://github.com/myekini/openresume-ai/issues) · [Contributing Guide](CONTRIBUTING.md)
 
 </div>
 
@@ -18,75 +19,163 @@
 
 ## What is this?
 
-OpenResume AI parses your resume (PDF or DOCX) into a structured AST, runs a LangGraph agent against a target job description, and surfaces a set of **edit cards** — each proposing a single bullet improvement with a plain-English reason. You accept or revert each one. The agent never touches dates, org names, structure, or anything you didn't ask it to change.
+OpenResume AI parses your resume (PDF or DOCX) into a structured AST, runs a multi-node LangGraph agent against a target job description, and surfaces **edit cards** — each one proposing a single bullet improvement with a plain-English reason.
 
-The result is a clean, ATS-optimized PDF — exported via LaTeX — that still sounds exactly like you.
+You accept or revert each edit individually. The agent **never touches dates, org names, role titles, or structure**. When you're done, it exports a clean, ATS-optimized PDF via LaTeX that still sounds exactly like you.
 
 ```
-Upload resume → Paste JD → Review AI edit cards → Accept / Revert → Export PDF
+Upload resume  →  Paste JD  →  Review AI edit cards  →  Accept / Revert  →  Export PDF
 ```
 
 ---
 
-## Two Branches, One Contract
+## Core Principles
 
-This repo ships two production backends behind an identical API surface. The frontend is **shared and unchanged** across both.
+**The AI is an editor, not an author.**
+It proposes changes to individual bullet points only. It cannot rewrite sections, invent experience, or alter structure.
 
-| | `main` | `dev/muhammad` |
-|---|---|---|
-| **Backend language** | TypeScript (Node.js) | Python 3.12 |
-| **Agent framework** | LangGraph.js | LangGraph Python |
-| **API layer** | Express.js | FastAPI + Uvicorn |
-| **Streaming** | Vercel AI SDK (SSE) | sse-starlette (SSE) |
-| **Hosting target** | Vercel | Railway / Render / Fly.io |
-| **Frontend** | Next.js 15 — identical | Next.js 15 — identical |
+**Every edit is explainable.**
+Each `EditPatch` carries a `reason` field rendered directly in the UI. The user always sees *why* a change was suggested before deciding.
 
-The frontend points to whichever backend is running via a single env var:
+**Human-in-the-loop is mandatory, not optional.**
+The LangGraph agent pauses at a `humanReview` checkpoint after generating patches. Nothing is written to the resume AST until the user explicitly accepts each card.
 
-```bash
-# frontend/.env.local
-NEXT_PUBLIC_API_URL=http://localhost:3001   # main  (Node.js on 3001)
-NEXT_PUBLIC_API_URL=http://localhost:8000   # dev/muhammad (Python on 8000)
+**Privacy mode is a first-class feature.**
+Ollama integration runs the entire pipeline locally. No resume data leaves the machine.
+
+---
+
+## How the Agent Works
+
+This is the most important part of the system. The LangGraph graph has 5 nodes:
+
 ```
+                    ┌─────────────────────────────────────────────────────┐
+  POST /agent       │                   LANGGRAPH AGENT                   │
+  ─────────────►    │                                                     │
+                    │   ┌──────────┐    ┌─────────────┐    ┌──────────┐  │
+  {                 │   │ parseJd  │───►│ analyzeGaps │───►│ generate │  │
+    session_id,     │   │          │    │             │    │  Edits   │  │
+    resume_ast,     │   │ Extract  │    │ Find gaps   │    │          │  │
+    jd_text         │   │ skills,  │    │ between     │    │ Produce  │  │
+  }                 │   │ tone,    │    │ resume and  │    │ EditPatch│  │
+                    │   │ keywords │    │ JD reqs     │    │ array    │  │
+                    │   └──────────┘    └─────────────┘    └────┬─────┘  │
+                    │                                           │         │
+  ◄─────────────    │   event: edits_ready        ◄────────────┘         │
+  SSE stream        │                                                     │
+                    │                    ── INTERRUPT ──                  │
+                    │            (graph serialised to MemorySaver)        │
+                    └─────────────────────────────────────────────────────┘
+
+  [User reviews edit cards in browser — accept / revert each one]
+
+                    ┌─────────────────────────────────────────────────────┐
+  POST /agent       │                   LANGGRAPH AGENT                   │
+  /resume           │         (resumes from saved checkpoint)             │
+  ─────────────►    │                                                     │
+                    │   ┌──────────────┐    ┌─────────────────────────┐  │
+  {                 │   │ humanReview  │───►│     applyApproved       │  │
+    session_id,     │   │              │    │                         │  │
+    approved_       │   │ Receives     │    │ Mutates bullets[] only  │  │
+    patches         │   │ patch        │    │ for accepted patches    │  │
+  }                 │   │ decisions    │    │ Discards reverted ones  │  │
+                    │   └──────────────┘    └────────────┬────────────┘  │
+                    │                                    │                │
+  ◄─────────────    │   event: ast_updated  ◄────────────┘               │
+  SSE stream        │                                                     │
+                    └─────────────────────────────────────────────────────┘
+```
+
+The `session_id` is the LangGraph `thread_id` — the checkpoint key that lets the graph resume from the exact pause point across HTTP requests.
+
+**What the AI can modify:** `bullets[]` inside any `ResumeItem` where `locked: false`.
+**What the AI cannot touch:** `role`, `org`, `date`, `location`, section structure, or any item where `locked: true`.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                  BROWSER  (TypeScript)                   │
-│                                                         │
-│   ┌──────────────────┐      ┌────────────────────────┐  │
-│   │   CHAT PANEL     │      │   CANVAS (live resume) │  │
-│   │   35% width      │◄────►│   65% width            │  │
-│   │   Zustand store  │      │   Edit card overlay    │  │
-│   └────────┬─────────┘      └──────────┬─────────────┘  │
-└────────────┼─────────────────────────── ┼───────────────┘
-             │  HTTP / SSE                │  Zustand state
-┌────────────▼────────────────────────────────────────────┐
-│                    BACKEND  (two impls, one contract)    │
-│                                                         │
-│  POST /parse          multipart → ResumeAST JSON        │
-│  POST /agent          AgentRequest → SSE stream         │
-│  POST /agent/resume   patch decisions → SSE stream      │
-│  POST /export         {ast, template} → PDF bytes       │
-│  GET  /versions/:id   → version list / snapshot         │
-└──────────────────────────────┬──────────────────────────┘
-                               │
-┌──────────────────────────────▼──────────────────────────┐
-│                       DATA LAYER                         │
-│  Supabase  — Postgres (resume AST, versions)            │
-│  Redis     — rate limiting, session metadata            │
-└──────────────────────────────┬──────────────────────────┘
-                               │
-               ┌───────────────▼──────────────┐
-               │          LLM BACKENDS        │
-               │  Claude 3.5 Sonnet (default) │
-               │  GPT-4o                      │
-               │  Gemini 1.5 Pro              │
-               │  Ollama  (local / private)   │
-               └──────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                              BROWSER  (Next.js 15)                               │
+│                                                                                  │
+│  ┌───────────────────────────┐        ┌───────────────────────────────────────┐  │
+│  │       CHAT PANEL          │        │         RESUME CANVAS                 │  │
+│  │                           │        │                                       │  │
+│  │  • Message history        │◄──────►│  • Live resume renderer (AST-driven)  │  │
+│  │  • Streaming token output │ Zustand│  • Edit card overlay (per bullet)     │  │
+│  │  • Edit card decisions    │ store  │  • Version history panel              │  │
+│  │  • JD paste input         │        │  • Lock / unlock sections             │  │
+│  └─────────────┬─────────────┘        └─────────────────┬─────────────────────┘  │
+└────────────────┼──────────────────────────────────────── ┼────────────────────────┘
+                 │                                          │
+                 │  HTTP  ·  SSE stream                     │  Zustand state updates
+                 ▼                                          ▼
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                        BACKEND  (two implementations, one API contract)          │
+│                                                                                  │
+│    main branch                         dev/muhammad branch                       │
+│    ────────────────────────────         ───────────────────────────────          │
+│    Node.js 20 + TypeScript             Python 3.12                              │
+│    Express.js                          FastAPI + Uvicorn                        │
+│    LangGraph.js                        LangGraph Python                         │
+│    Vercel AI SDK (SSE)                 sse-starlette (SSE)                      │
+│    Zod validation                      Pydantic v2 validation                   │
+│                                                                                  │
+│    ┌─────────────────────────────────────────────────────────────────────────┐   │
+│    │                       SHARED API CONTRACT                               │   │
+│    │                                                                         │   │
+│    │  POST /parse           multipart (.pdf | .docx) → ResumeAST JSON       │   │
+│    │  POST /agent           AgentRequest → SSE stream (tokens + patches)    │   │
+│    │  POST /agent/resume    patch decisions → SSE stream (ast_updated)      │   │
+│    │  POST /export          { ast, template_id } → application/pdf          │   │
+│    │  GET  /versions/:uid   → VersionSummary[]                              │   │
+│    │  POST /versions        VersionRecord → { id }                          │   │
+│    │  POST /models/test     { provider, api_key? } → { ok, model_list? }   │   │
+│    └─────────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────┬────────────────────────────────────────────────┘
+                                  │
+           ┌──────────────────────┼──────────────────────┐
+           ▼                      ▼                      ▼
+┌─────────────────┐    ┌─────────────────────┐    ┌──────────────────────────┐
+│   LLM LAYER     │    │    DATA LAYER        │    │    EXPORT LAYER          │
+│                 │    │                     │    │                          │
+│ Claude 3.5      │    │ Supabase Postgres   │    │ Jinja2 / Handlebars      │
+│ Sonnet (default)│    │ resume AST +        │    │ → .tex template          │
+│                 │    │ version history     │    │                          │
+│ GPT-4o          │    │                     │    │ tectonic (LaTeX)         │
+│                 │    │ Supabase Storage    │    │ → PDF bytes              │
+│ Gemini 1.5 Pro  │    │ uploaded files      │    │                          │
+│                 │    │                     │    │ No TeX Live needed       │
+│ Ollama (local)  │    │ Redis (Upstash)     │    │                          │
+│ no data leaves  │    │ rate limiting +     │    │                          │
+│ the machine     │    │ session metadata    │    │                          │
+└─────────────────┘    └─────────────────────┘    └──────────────────────────┘
+```
+
+---
+
+## Two Branches, One Contract
+
+The frontend is **identical** across both branches. Only the backend differs.
+
+| | `main` | `dev/muhammad` |
+|---|---|---|
+| **Language** | TypeScript (Node.js 20) | Python 3.12 |
+| **Agent framework** | LangGraph.js | LangGraph Python |
+| **API layer** | Express.js | FastAPI + Uvicorn |
+| **SSE streaming** | Vercel AI SDK | sse-starlette |
+| **Validation** | Zod | Pydantic v2 |
+| **LaTeX export** | Handlebars + tectonic | Jinja2 + tectonic |
+| **Deploy target** | Vercel / Railway | Railway / Render / Fly.io |
+
+Switch backend by changing one env var:
+
+```bash
+# frontend/.env.local
+NEXT_PUBLIC_API_URL=http://localhost:3001   # main  — Node.js
+NEXT_PUBLIC_API_URL=http://localhost:8000   # dev/muhammad — Python
 ```
 
 ---
@@ -107,47 +196,40 @@ openresume-ai/
 │   │   │   ├── canvas/               # ResumeCanvas, ChatPanel, VersionHistory
 │   │   │   ├── onboarding/           # Step components
 │   │   │   ├── landing/              # Hero, Features, HeroMockup
-│   │   │   ├── settings/             # AIModels, Account settings panels
+│   │   │   ├── settings/             # AIModels, Account panels
 │   │   │   ├── shared/               # Navbar, Footer
-│   │   │   └── ui/                   # Button, Badge, Input, Toggle primitives
+│   │   │   └── ui/                   # Button, Badge, Input primitives
 │   │   └── store/
-│   │       └── useResumeStore.ts     # Zustand — global edit card + UI state
+│   │       └── useResumeStore.ts     # Zustand — global state
 │   ├── .env.example
 │   └── package.json
 │
 ├── backend/                          # main branch — Node.js + LangGraph.js
 │   ├── src/
-│   │   ├── index.ts                  # Express entry point (port 3001)
+│   │   ├── index.ts                  # Express entry (port 3001)
 │   │   ├── agent/
-│   │   │   ├── state.ts              # AgentState, EditPatch types (Zod)
-│   │   │   ├── nodes.ts              # parseJd, analyzeGaps, generateEdits
-│   │   │   └── graph.ts              # LangGraph StateGraph + MemorySaver
+│   │   │   ├── state.ts              # AgentState, EditPatch (Zod)
+│   │   │   ├── nodes.ts              # parseJd, analyzeGaps, generateEdits, applyApproved
+│   │   │   └── graph.ts              # StateGraph + MemorySaver + interruptBefore
 │   │   └── routes/
 │   │       ├── parse.ts              # POST /parse
-│   │       ├── agent.ts              # POST /agent, POST /agent/resume
+│   │       ├── agent.ts              # POST /agent + POST /agent/resume
 │   │       ├── export.ts             # POST /export
-│   │       └── versions.ts           # GET|POST /versions
+│   │       ├── versions.ts           # GET|POST /versions
+│   │       └── models.ts             # POST /models/test
+│   ├── IMPLEMENTATION.md             # 12-block build guide
 │   ├── .env.example
 │   └── package.json
 │
-└── backend-py/                       # dev/muhammad branch — FastAPI + Python
-    ├── main.py                       # FastAPI entry point + CORS
-    ├── agent/
-    │   ├── state.py                  # Pydantic: ResumeAST, EditPatch, AgentState
-    │   ├── nodes.py                  # parse_jd, analyze_gaps, generate_edits, apply
-    │   └── graph.py                  # LangGraph StateGraph + MemorySaver
-    ├── parsers/
-    │   ├── docx_parser.py            # mammoth → raw text → LLM → ResumeAST
-    │   └── pdf_parser.py             # pdfplumber → raw text → LLM → ResumeAST
+└── backend-py/                       # dev/muhammad branch only
+    ├── main.py                       # FastAPI entry (port 8000)
     ├── routes/
     │   ├── parse.py                  # POST /parse
-    │   ├── agent.py                  # POST /agent, POST /agent/resume (SSE)
-    │   ├── export.py                 # POST /export → PDF bytes
-    │   └── versions.py               # GET|POST /versions
-    ├── export/
-    │   └── latex.py                  # Jinja2 → .tex → tectonic → PDF
-    ├── templates/
-    │   └── clean/main.tex            # LaTeX resume template
+    │   ├── agent.py                  # POST /agent + POST /agent/resume (SSE)
+    │   ├── export.py                 # POST /export
+    │   ├── versions.py               # GET|POST /versions
+    │   └── models.py                 # POST /models/test
+    ├── IMPLEMENTATION.md             # 12-block build guide
     ├── requirements.txt
     ├── Dockerfile
     └── .env.example
@@ -161,35 +243,38 @@ openresume-ai/
 
 - Node.js 20+
 - Python 3.12+ *(dev/muhammad branch only)*
-- An [Anthropic API key](https://console.anthropic.com) *(or OpenAI / Ollama)*
+- An [Anthropic API key](https://console.anthropic.com) *(or OpenAI / Ollama — no key needed)*
 
-### 1. Clone and pick your branch
+### 1. Clone
 
 ```bash
-# Full-stack TypeScript (main)
 git clone https://github.com/myekini/openresume-ai.git
 cd openresume-ai
 
 # Python backend variant
-git checkout dev/muhammad
+# git checkout dev/muhammad
 ```
 
-### 2. Frontend (both branches)
+### 2. Frontend
 
 ```bash
 cd frontend
-cp .env.example .env.local       # then edit NEXT_PUBLIC_API_URL
+cp .env.example .env.local     # set NEXT_PUBLIC_API_URL
 npm install
-npm run dev                       # http://localhost:3000
+npm run dev                    # → http://localhost:3000
 ```
 
 ### 3a. Node.js Backend (`main`)
 
 ```bash
 cd backend
-cp .env.example .env              # add ANTHROPIC_API_KEY
+cp .env.example .env           # add ANTHROPIC_API_KEY
 npm install
-npm run dev                       # http://localhost:3001
+npm run dev                    # → http://localhost:3001
+
+# Verify
+curl http://localhost:3001/health
+# {"status":"ok","backend":"node"}
 ```
 
 ### 3b. Python Backend (`dev/muhammad`)
@@ -197,62 +282,78 @@ npm run dev                       # http://localhost:3001
 ```bash
 cd backend-py
 python -m venv .venv
-source .venv/bin/activate         # Windows: .\.venv\Scripts\activate
+source .venv/bin/activate      # Windows: .\.venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env              # add ANTHROPIC_API_KEY
+cp .env.example .env           # add ANTHROPIC_API_KEY
 uvicorn main:app --reload --port 8000
+
+# Verify
+curl http://localhost:8000/health
+# {"status":"ok","backend":"python"}
 ```
 
 ---
 
 ## API Reference
 
-Both backends expose identical endpoints. The frontend calls these via `NEXT_PUBLIC_API_URL`.
+Both backends expose **identical** endpoints.
 
-| Method | Endpoint | Request | Response |
-|--------|----------|---------|----------|
+| Method | Endpoint | Body | Response |
+|--------|----------|------|----------|
 | `POST` | `/parse` | `multipart/form-data` — `.pdf` or `.docx` | `ResumeAST` JSON |
-| `POST` | `/agent` | `AgentRequest` JSON | SSE stream |
-| `POST` | `/agent/resume` | `ResumeRequest` JSON (patch decisions) | SSE stream |
-| `POST` | `/export` | `{ ast: ResumeAST, template_id: string }` | `application/pdf` bytes |
-| `POST` | `/versions` | `VersionRecord` JSON | `{ id: string }` |
+| `POST` | `/agent` | `AgentRequest` | SSE stream |
+| `POST` | `/agent/resume` | `{ session_id, approved_patches }` | SSE stream |
+| `POST` | `/export` | `{ ast, template_id }` | `application/pdf` bytes |
+| `POST` | `/versions` | `VersionRecord` | `{ id: string }` |
 | `GET` | `/versions/:user_id` | — | `VersionSummary[]` |
-| `GET` | `/versions/detail/:id` | — | Full version with AST snapshot |
+| `POST` | `/models/test` | `{ provider, api_key?, base_url? }` | `{ ok, model_list? }` |
+| `GET` | `/health` | — | `{ status, backend }` |
 
-### SSE Event Types
-
-The `/agent` endpoint streams the following events:
+### SSE Event Stream
 
 ```
-event: token          data: { "text": "..." }           # LLM reasoning tokens
-event: edits_ready    data: EditPatch[]                  # patches ready for review
-event: checkpoint     data: {}                           # graph paused, awaiting user
-event: ast_updated    data: ResumeAST                   # edits applied, AST refreshed
-event: done           data: {}                           # stream closed
+event: token          data: { "text": "Analyzing experience section..." }
+event: edits_ready    data: EditPatch[]
+event: checkpoint     data: {}
+event: ast_updated    data: ResumeAST
+event: error          data: { "message": "..." }
+event: done           data: {}
 ```
 
 ### Core Data Model
 
 ```typescript
-// Shared contract — TypeScript (backend/) and Pydantic (backend-py/)
-
 interface ResumeAST {
-  meta: ResumeMeta;
-  sections: ResumeSection[];
+  meta: {
+    name: string; email: string; phone?: string;
+    location?: string; linkedin?: string; github?: string;
+  };
+  sections: {
+    id: string;
+    type: 'experience' | 'education' | 'skills' | 'projects' | 'custom';
+    title: string;
+    locked: boolean;           // AI skips entire section if true
+    items: {
+      id: string;
+      role?: string;           // immutable
+      org?: string;            // immutable
+      date?: string;           // immutable
+      locked: boolean;         // AI skips this item if true
+      bullets: string[];       // ← only field AI may modify
+    }[];
+  }[];
 }
 
 interface EditPatch {
   item_id: string;
   section_title: string;
-  original: string;       // exact bullet being replaced
-  proposed: string;       // AI's suggested version
-  reason: string;         // shown to user — always present
-  note?: string;          // shown if AI added a placeholder (e.g. a %)
-  status: "pending" | "accepted" | "reverted";
+  original: string;            // exact text being replaced
+  proposed: string;            // AI's suggestion
+  reason: string;              // always shown to user
+  note?: string;               // shown if AI added a placeholder (e.g. X%)
+  status: 'pending' | 'accepted' | 'reverted';
 }
 ```
-
-> **Constraint:** The AI is only permitted to modify `bullets[]` inside a `ResumeItem`. Dates, org names, roles, and structure are immutable. This is enforced at the agent prompt level and the `apply_approved` graph node.
 
 ---
 
@@ -260,50 +361,47 @@ interface EditPatch {
 
 ### Frontend
 
-| Layer | Choice |
-|-------|--------|
-| Framework | Next.js 15 (App Router) |
-| Language | TypeScript |
-| Styling | Tailwind CSS v4 (`@theme inline` tokens) |
-| State | Zustand |
-| UI Primitives | Custom — Button, Badge, Input, Toggle |
-| Icons | Lucide React |
+| Layer | Choice | Why |
+|-------|--------|-----|
+| Framework | Next.js 15 (App Router) | RSC, streaming, file-based routing |
+| Language | TypeScript 5 | Shared types with Node.js backend |
+| Styling | Tailwind CSS v4 | `@theme inline` design tokens |
+| State | Zustand | Minimal, no boilerplate |
+| Icons | Lucide React | Consistent, tree-shakeable |
 
 ### Backend — `main` (Node.js)
 
-| Layer | Choice |
-|-------|--------|
-| Runtime | Node.js 20 |
-| API | Express.js |
-| Agent | LangGraph.js |
-| Streaming | SSE via `express` |
-| LLM | Anthropic SDK (`@langchain/anthropic`) |
-| Parsing | mammoth (DOCX), pdf-parse (PDF) |
-| Validation | Zod |
+| Layer | Choice | Why |
+|-------|--------|-----|
+| Runtime | Node.js 20 | Best LangGraph.js support |
+| API | Express.js | Lightweight, SSE-friendly |
+| Agent | LangGraph.js | Stateful graph, interrupt/resume |
+| LLM | `@langchain/anthropic` | Claude 3.5 Sonnet |
+| Streaming | Vercel AI SDK | `streamText` + `useChat` |
+| Validation | Zod | Typed, mirrors Pydantic contract |
 
 ### Backend — `dev/muhammad` (Python)
 
-| Layer | Choice |
-|-------|--------|
-| Runtime | Python 3.12 |
-| API | FastAPI + Uvicorn |
-| Agent | LangGraph Python |
-| Streaming | sse-starlette |
-| LLM | Anthropic Python SDK |
-| Parsing | mammoth (DOCX), pdfplumber (PDF) |
-| Validation | Pydantic v2 |
-| Export | Jinja2 → tectonic (LaTeX) |
+| Layer | Choice | Why |
+|-------|--------|-----|
+| Runtime | Python 3.12 | Native LangGraph, better ML ecosystem |
+| API | FastAPI + Uvicorn | Async, Pydantic native, auto `/docs` |
+| Agent | LangGraph Python | Identical graph API to JS version |
+| LLM | Anthropic Python SDK | Claude 3.5 Sonnet |
+| Streaming | sse-starlette | Native SSE in FastAPI |
+| Validation | Pydantic v2 | Fast, typed, JSON Schema compatible |
+| Export | Jinja2 + tectonic | Safe LaTeX templating |
 
-### Infrastructure (both)
+### Infrastructure
 
 | Layer | Choice |
 |-------|--------|
 | Auth | Clerk |
 | Database | Supabase (Postgres) |
 | File Storage | Supabase Storage |
-| Rate Limiting | Redis (Upstash) |
-| Frontend Hosting | Vercel |
-| Python Hosting | Railway / Render / Fly.io |
+| Rate Limiting | Redis — Upstash |
+| Frontend Deploy | Vercel |
+| Backend Deploy | Railway / Render / Fly.io |
 
 ---
 
@@ -312,88 +410,87 @@ interface EditPatch {
 ### `frontend/.env.local`
 
 ```bash
-NEXT_PUBLIC_API_URL=http://localhost:3001    # main: Node.js backend
-# NEXT_PUBLIC_API_URL=http://localhost:8000  # dev/muhammad: Python backend
+NEXT_PUBLIC_API_URL=http://localhost:3001    # Node.js backend (main)
+# NEXT_PUBLIC_API_URL=http://localhost:8000  # Python backend (dev/muhammad)
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_...
 CLERK_SECRET_KEY=sk_...
 ```
 
-### `backend/.env` *(main branch)*
+### `backend/.env` — main
 
 ```bash
 PORT=3001
 FRONTEND_URL=http://localhost:3000
 ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...                        # optional
+OPENAI_API_KEY=sk-...
 SUPABASE_URL=https://xxx.supabase.co
 SUPABASE_SERVICE_KEY=eyJ...
 REDIS_URL=redis://...
 ```
 
-### `backend-py/.env` *(dev/muhammad branch)*
+### `backend-py/.env` — dev/muhammad
 
 ```bash
 ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...                        # optional
-OLLAMA_BASE_URL=http://localhost:11434       # optional, local models
+OPENAI_API_KEY=sk-...
+OLLAMA_BASE_URL=http://localhost:11434
 SUPABASE_URL=https://xxx.supabase.co
 SUPABASE_SERVICE_KEY=eyJ...
 REDIS_URL=redis://...
 ```
-
----
-
-## Design Principles
-
-**1. The AI is an editor, not an author.**
-It proposes changes to individual bullets. It does not rewrite sections, invent experience, or alter the structure of your resume.
-
-**2. Every edit is explainable.**
-Each `EditPatch` carries a `reason` field shown directly in the UI. The user always knows why a change was suggested.
-
-**3. Human in the loop.**
-The LangGraph agent pauses at a `human_review` checkpoint after generating patches. Nothing is applied to the resume AST until the user explicitly accepts each card.
-
-**4. Privacy mode is a first-class feature.**
-Ollama integration allows the entire pipeline to run locally. No resume data leaves the machine.
 
 ---
 
 ## Roadmap
 
-- [x] Frontend — landing, onboarding, canvas, settings
-- [x] Python backend scaffold — FastAPI, LangGraph, parsers, export
-- [ ] `/parse` endpoint — DOCX + PDF → ResumeAST
-- [ ] `/agent` endpoint — single-turn edit suggestions
+- [x] Frontend — landing, onboarding, canvas, settings, version history
+- [x] Node.js backend scaffold — Express, LangGraph.js, all routes
+- [x] Python backend scaffold — FastAPI, routes, `POST /models/test`
+- [x] `POST /models/test` — key validation + model listing (all providers)
+- [ ] `POST /parse` — DOCX + PDF → ResumeAST via LLM extraction
+- [ ] `POST /agent` — single-turn edit suggestions
 - [ ] SSE streaming on `/agent`
-- [ ] LangGraph multi-node agent with `interrupt` / resume
-- [ ] LaTeX export via tectonic
-- [ ] Supabase — AST persistence and version history
+- [ ] LangGraph multi-node agent with `interruptBefore` + resume
+- [ ] `POST /export` — LaTeX → PDF via tectonic
+- [ ] Supabase persistence — AST + version history
+- [ ] Clerk authentication + JWT middleware
 - [ ] Ollama local model support
-- [ ] Clerk authentication + JWT validation in FastAPI
-- [ ] Docker Compose for local full-stack dev
+- [ ] Docker Compose — full-stack local dev
+- [ ] Public deployment (Vercel + Railway)
+
+---
+
+## Implementing the Backend
+
+Both backends ship with a **12-block implementation guide** that walks through the full build in testable increments:
+
+- `backend/IMPLEMENTATION.md` — Node.js + LangGraph.js
+- `backend-py/IMPLEMENTATION.md` — Python + LangGraph
+
+Each block ends with a `curl` verification command. Start at Block 1, never skip ahead.
 
 ---
 
 ## Contributing
 
-Contributions are welcome. Please open an issue before submitting a large PR.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 
 ```bash
-# Fork → clone your fork
+# Fork → clone
 git clone https://github.com/YOUR_USERNAME/openresume-ai.git
 
-# Create a feature branch off the correct base
-git checkout -b feat/your-feature main          # for Node.js changes
-git checkout -b feat/your-feature dev/muhammad  # for Python changes
-
-# Make changes, then open a PR against the correct base branch
+# Branch off the right base
+git checkout -b feat/your-feature main          # frontend or Node.js changes
+git checkout -b feat/your-feature dev/muhammad  # Python backend changes
 ```
 
-**Branch targeting:**
-- Changes to `frontend/` → PR against `main`
-- Changes to `backend/` → PR against `main`
-- Changes to `backend-py/` → PR against `dev/muhammad`
+**Branch targets:**
+
+| Change type | Base branch |
+|-------------|-------------|
+| `frontend/` | `main` |
+| `backend/` (Node.js) | `main` |
+| `backend-py/` (Python) | `dev/muhammad` |
 
 ---
 
@@ -404,5 +501,5 @@ MIT © [Muhammad Yekini](https://github.com/myekini)
 ---
 
 <div align="center">
-<sub>Built with Next.js, FastAPI, and LangGraph · TypeScript frontend, Python AI backend</sub>
+<sub>An open-source alternative to Teal, Rezi, and Kickresume — without the black-box rewrites.</sub>
 </div>
